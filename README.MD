@@ -34,8 +34,8 @@ A command-line Java application for securely encrypting and decrypting files usi
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd Cryptography
+git clone https://github.com/Ishit-Parikh/cryptiX.git
+cd cryptiX
 ```
 
 2. Compile the Java files:
