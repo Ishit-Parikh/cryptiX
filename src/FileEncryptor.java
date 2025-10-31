@@ -3,6 +3,8 @@ import javax.crypto.CipherOutputStream;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
 import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 
 /**
@@ -10,28 +12,24 @@ import java.security.SecureRandom;
  *
  * This class takes any file (text, image, video, etc.) and encrypts it
  * using AES-256 encryption in CBC mode.
+ *
+ * UPDATED: Now stores original filename in encrypted file metadata
+ * for automatic restoration during decryption.
  */
 public class FileEncryptor {
 
-    // AES algorithm with CBC mode and PKCS5 padding
-    // CBC = Cipher Block Chaining (a secure mode of operation)
-    // PKCS5Padding = automatically handles files that aren't perfect multiples of block size
     private static final String TRANSFORMATION = "AES/CBC/PKCS5Padding";
-
-    // IV size for AES is always 16 bytes (128 bits)
     private static final int IV_LENGTH = 16;
 
     /**
      * Encrypts a file using the provided password.
      *
-     * WHAT HAPPENS STEP BY STEP:
-     * 1. Generate a random salt for key derivation
-     * 2. Derive encryption key from password + salt
-     * 3. Generate a random IV (Initialization Vector)
-     * 4. Write salt to output file (so we can decrypt later)
-     * 5. Write IV to output file (so we can decrypt later)
-     * 6. Read input file in chunks and encrypt each chunk
-     * 7. Write encrypted chunks to output file
+     * NEW ENCRYPTED FILE STRUCTURE:
+     * 1. Salt (16 bytes)
+     * 2. IV (16 bytes)
+     * 3. Filename Length (4 bytes - as integer)
+     * 4. Original Filename (variable length UTF-8 bytes)
+     * 5. Encrypted file content
      *
      * @param inputFilePath Path to the file you want to encrypt
      * @param outputFilePath Path where encrypted file will be saved
@@ -41,6 +39,12 @@ public class FileEncryptor {
     public static void encryptFile(String inputFilePath, String outputFilePath, char[] password)
             throws Exception {
 
+        // Extract original filename from input path
+        File inputFile = new File(inputFilePath);
+        String originalFilename = inputFile.getName();
+
+        System.out.println("Original filename: " + originalFilename);
+
         // STEP 1 & 2: Generate salt and derive key from password
         System.out.println("Generating encryption key from password...");
         CryptoUtils.SaltAndKey saltAndKey = CryptoUtils.generateSaltAndKey(password);
@@ -48,41 +52,41 @@ public class FileEncryptor {
         SecretKey key = saltAndKey.key;
 
         // STEP 3: Generate random IV
-        // Remember: IV ensures the same file encrypted twice produces different outputs
         System.out.println("Generating initialization vector (IV)...");
         byte[] iv = generateIV();
 
         // STEP 4: Initialize the encryption cipher
-        // Think of Cipher as the "encryption engine"
         Cipher cipher = Cipher.getInstance(TRANSFORMATION);
         cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
 
-        // STEP 5: Create file streams
-        // FileInputStream reads the original file
-        // FileOutputStream writes the encrypted file
+        // STEP 5: Prepare filename metadata
+        byte[] filenameBytes = originalFilename.getBytes(StandardCharsets.UTF_8);
+        int filenameLength = filenameBytes.length;
+
+        // Convert filename length to 4 bytes
+        byte[] filenameLengthBytes = ByteBuffer.allocate(4).putInt(filenameLength).array();
+
+        // STEP 6: Create file streams and write metadata + encrypted content
         try (FileInputStream fis = new FileInputStream(inputFilePath);
              FileOutputStream fos = new FileOutputStream(outputFilePath)) {
 
-            // STEP 6: Write metadata (salt and IV) to the beginning of encrypted file
-            // This is crucial! Without this, we can't decrypt later
+            // Write metadata to the beginning of encrypted file
             System.out.println("Writing encryption metadata...");
-            fos.write(salt);  // Write salt (16 bytes)
-            fos.write(iv);    // Write IV (16 bytes)
+            fos.write(salt);                    // Write salt (16 bytes)
+            fos.write(iv);                      // Write IV (16 bytes)
+            fos.write(filenameLengthBytes);     // Write filename length (4 bytes)
+            fos.write(filenameBytes);           // Write original filename (variable bytes)
 
             // STEP 7: Encrypt the file content
-            // CipherOutputStream automatically encrypts data as we write
             System.out.println("Encrypting file content...");
             try (CipherOutputStream cos = new CipherOutputStream(fos, cipher)) {
 
                 // Read and encrypt in 4KB chunks
-                // This is memory-efficient - we don't load the entire file at once!
                 byte[] buffer = new byte[4096];
                 int bytesRead;
 
-                // Keep reading until we've processed the entire file
                 while ((bytesRead = fis.read(buffer)) != -1) {
                     cos.write(buffer, 0, bytesRead);
-                    // Each write automatically encrypts the data!
                 }
             }
 
@@ -92,11 +96,6 @@ public class FileEncryptor {
 
     /**
      * Generates a random Initialization Vector (IV).
-     *
-     * The IV is the "random starting point" we discussed earlier.
-     * It ensures encryption is non-deterministic (same input = different output each time).
-     *
-     * @return A byte array containing the random IV
      */
     private static byte[] generateIV() {
         SecureRandom random = new SecureRandom();
@@ -107,9 +106,6 @@ public class FileEncryptor {
 
     /**
      * Utility method to display file information.
-     * Helps you see the file size changes after encryption.
-     *
-     * @param filePath Path to the file
      */
     public static void displayFileInfo(String filePath) {
         File file = new File(filePath);
