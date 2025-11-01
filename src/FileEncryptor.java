@@ -20,6 +20,7 @@ public class FileEncryptor {
 
     private static final String TRANSFORMATION = "AES/CBC/PKCS5Padding";
     private static final int IV_LENGTH = 16;
+    private static final byte TYPE_FILE = 0;
 
     /**
      * Encrypts a file using the provided password.
