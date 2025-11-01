@@ -1,10 +1,12 @@
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.FileChooser;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import java.io.File;
 import java.util.Arrays;
@@ -27,6 +29,8 @@ public class EncryptionApp extends Application {
     private TextField passwordVisibleField;
     private Button startButton;
     private TextArea logArea;
+    private ProgressBar progressBar;
+    private Label progressLabel;
     private File selectedInputFile;
     private File selectedOutputFile;
 
@@ -58,6 +62,17 @@ public class EncryptionApp extends Application {
         startButton.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
         startButton.setOnAction(e -> handleStart());
 
+        // Progress bar
+        progressBar = new ProgressBar(0);
+        progressBar.setPrefWidth(400);
+        progressBar.setVisible(false);
+
+        progressLabel = new Label();
+        progressLabel.setVisible(false);
+
+        VBox progressBox = new VBox(5, progressBar, progressLabel);
+        progressBox.setAlignment(Pos.CENTER);
+
         // Log area
         logArea = new TextArea();
         logArea.setEditable(false);
@@ -73,6 +88,7 @@ public class EncryptionApp extends Application {
                 fileSection,
                 passwordSection,
                 startButton,
+                progressBox,
                 new Label("Activity Log:"),
                 logArea
         );
@@ -212,16 +228,71 @@ public class EncryptionApp extends Application {
     }
 
     /**
-     * Opens file chooser for input file
+     * Opens unified file/folder chooser for input
      */
     private void browseInputFile() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Select Input File");
+        if (encryptRadio.isSelected()) {
+            // ENCRYPT MODE: Show custom chooser with both options
+            Stage chooserStage = new Stage();
+            chooserStage.setTitle("Select Input");
 
-        selectedInputFile = fileChooser.showOpenDialog(null);
-        if (selectedInputFile != null) {
-            inputFileField.setText(selectedInputFile.getAbsolutePath());
-            log("Input file selected: " + selectedInputFile.getName());
+            VBox layout = new VBox(15);
+            layout.setPadding(new Insets(20));
+            layout.setAlignment(Pos.CENTER);
+
+            Label promptLabel = new Label("What would you like to encrypt?");
+            promptLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+
+            Button selectFileBtn = new Button("Select File");
+            selectFileBtn.setPrefWidth(200);
+            selectFileBtn.setOnAction(e -> {
+                chooserStage.close();
+                FileChooser fileChooser = new FileChooser();
+                fileChooser.setTitle("Select File to Encrypt");
+
+                File file = fileChooser.showOpenDialog(null);
+                if (file != null) {
+                    selectedInputFile = file;
+                    inputFileField.setText(file.getAbsolutePath());
+                    log("Input file selected: " + file.getName());
+                }
+            });
+
+            Button selectFolderBtn = new Button("Select Folder");
+            selectFolderBtn.setPrefWidth(200);
+            selectFolderBtn.setOnAction(e -> {
+                chooserStage.close();
+                DirectoryChooser dirChooser = new DirectoryChooser();
+                dirChooser.setTitle("Select Folder to Encrypt");
+
+                File folder = dirChooser.showDialog(null);
+                if (folder != null) {
+                    selectedInputFile = folder;
+                    inputFileField.setText(folder.getAbsolutePath());
+                    log("Input folder selected: " + folder.getName());
+                }
+            });
+
+            Button cancelBtn = new Button("Cancel");
+            cancelBtn.setPrefWidth(200);
+            cancelBtn.setOnAction(e -> chooserStage.close());
+
+            layout.getChildren().addAll(promptLabel, selectFileBtn, selectFolderBtn, cancelBtn);
+
+            Scene scene = new Scene(layout, 300, 220);
+            chooserStage.setScene(scene);
+            chooserStage.showAndWait();
+
+        } else {
+            // DECRYPT MODE: Only files
+            FileChooser fileChooser = new FileChooser();
+            fileChooser.setTitle("Select Encrypted File");
+
+            selectedInputFile = fileChooser.showOpenDialog(null);
+            if (selectedInputFile != null) {
+                inputFileField.setText(selectedInputFile.getAbsolutePath());
+                log("Encrypted file selected: " + selectedInputFile.getName());
+            }
         }
     }
 
@@ -231,7 +302,7 @@ public class EncryptionApp extends Application {
     private void browseOutputFile() {
         if (decryptRadio.isSelected()) {
             // DECRYPT MODE: Only ask for directory
-            javafx.stage.DirectoryChooser dirChooser = new javafx.stage.DirectoryChooser();
+            DirectoryChooser dirChooser = new DirectoryChooser();
             dirChooser.setTitle("Select Output Directory");
 
             File selectedDir = dirChooser.showDialog(null);
@@ -240,14 +311,19 @@ public class EncryptionApp extends Application {
                 log("Output directory selected: " + selectedDir.getName());
             }
         } else {
-            // ENCRYPT MODE: Ask for full file path (full freedom)
+            // ENCRYPT MODE: Ask for output file location
             FileChooser fileChooser = new FileChooser();
-            fileChooser.setTitle("Select Output Location");
+            fileChooser.setTitle("Save Encrypted File As");
 
-            selectedOutputFile = fileChooser.showSaveDialog(null);
-            if (selectedOutputFile != null) {
-                outputFileField.setText(selectedOutputFile.getAbsolutePath());
-                log("Output file selected: " + selectedOutputFile.getName());
+            // Auto-suggest filename based on input if available
+            if (selectedInputFile != null) {
+                fileChooser.setInitialFileName(selectedInputFile.getName() + ".enc");
+            }
+
+            File selectedFile = fileChooser.showSaveDialog(null);
+            if (selectedFile != null) {
+                outputFileField.setText(selectedFile.getAbsolutePath());
+                log("Output file location: " + selectedFile.getName());
             }
         }
     }
@@ -274,8 +350,18 @@ public class EncryptionApp extends Application {
         // Validate input file exists
         File inputFile = new File(inputPath);
         if (!inputFile.exists()) {
-            showError("Input file does not exist:\n" + inputPath);
+            showError("Input file/folder does not exist:\n" + inputPath);
             return;
+        }
+
+        // Auto-generate output filename if only directory provided (for encryption)
+        if (encryptRadio.isSelected()) {
+            File outputFile = new File(outputPath);
+            if (outputFile.isDirectory()) {
+                // User only provided directory - auto-generate filename
+                outputPath = outputPath + File.separator + inputFile.getName() + ".enc";
+                log("Auto-generated output filename: " + new File(outputPath).getName());
+            }
         }
 
         String password = passwordField.getText();
@@ -284,10 +370,35 @@ public class EncryptionApp extends Application {
             return;
         }
 
+        // Make variables final for lambda
+        final String finalOutputPath = outputPath;
+        final String finalPassword = password;
+
         // Disable button during operation
         startButton.setDisable(true);
         logArea.clear();
+        progressBar.setVisible(true);
+        progressLabel.setVisible(true);
+        progressBar.setProgress(0);
 
+        // Run encryption/decryption in background thread
+        new Thread(() -> {
+            try {
+                performOperation(inputFile, finalOutputPath, finalPassword);
+            } finally {
+                Platform.runLater(() -> {
+                    startButton.setDisable(false);
+                    progressBar.setVisible(false);
+                    progressLabel.setVisible(false);
+                });
+            }
+        }).start();
+    }
+
+    /**
+     * Performs the actual encryption/decryption operation
+     */
+    private void performOperation(File inputFile, String outputPath, String password) {
         // Perform encryption or decryption
         try {
             char[] passwordChars = password.toCharArray();
@@ -295,17 +406,48 @@ public class EncryptionApp extends Application {
             if (encryptRadio.isSelected()) {
                 // ENCRYPTION MODE
                 log("Starting encryption...");
-                log("Input: " + inputFile.getName());
-                log("Output: " + outputPath);
 
-                FileEncryptor.encryptFile(
-                        inputPath,
-                        outputPath,
-                        passwordChars
-                );
+                if (inputFile.isDirectory()) {
+                    // FOLDER ENCRYPTION
+                    log("Input: Folder - " + inputFile.getName());
+                    log("Output: " + outputPath);
 
-                log("✓ Encryption completed successfully!");
-                showSuccess("File encrypted successfully!");
+                    FolderEncryptor.encryptFolder(
+                            inputFile.getAbsolutePath(),
+                            outputPath,
+                            passwordChars,
+                            (current, total, currentFile) -> {
+                                Platform.runLater(() -> {
+                                    double progress = (double) current / total;
+                                    progressBar.setProgress(progress);
+                                    progressLabel.setText("Encrypting file " + current + " of " + total +
+                                            ": " + currentFile);
+                                });
+                            }
+                    );
+
+                    log("✓ Folder encryption completed successfully!");
+                    Platform.runLater(() -> showSuccess("Folder encrypted successfully!"));
+
+                } else {
+                    // SINGLE FILE ENCRYPTION
+                    log("Input: File - " + inputFile.getName());
+                    log("Output: " + outputPath);
+
+                    Platform.runLater(() -> {
+                        progressBar.setProgress(-1); // Indeterminate
+                        progressLabel.setText("Encrypting file...");
+                    });
+
+                    FileEncryptor.encryptFile(
+                            inputFile.getAbsolutePath(),
+                            outputPath,
+                            passwordChars
+                    );
+
+                    log("✓ Encryption completed successfully!");
+                    Platform.runLater(() -> showSuccess("File encrypted successfully!"));
+                }
 
             } else {
                 // DECRYPTION MODE
@@ -313,64 +455,107 @@ public class EncryptionApp extends Application {
                 log("Input: " + inputFile.getName());
 
                 // Validate encrypted file
-                if (!FileDecryptor.isValidEncryptedFile(inputPath)) {
-                    showError("Invalid encrypted file");
+                if (!FileDecryptor.isValidEncryptedFile(inputFile.getAbsolutePath())) {
+                    Platform.runLater(() -> showError("Invalid encrypted file"));
                     return;
                 }
 
-                // Check if output path is a directory
-                File outputLocation = new File(outputPath);
-                String finalOutputPath;
+                // Check if it's a folder or file
+                boolean isFolder = FolderEncryptor.isEncryptedFolder(inputFile.getAbsolutePath());
 
-                if (outputLocation.isDirectory()) {
-                    // Output is a directory - decrypt will auto-generate filename
-                    // We'll get the original filename from decryption
-                    // For now, use a temp path, then rename
+                if (isFolder) {
+                    // FOLDER DECRYPTION
+                    log("Detected: Encrypted folder");
 
-                    // Decrypt to temp file first to get original filename
-                    String tempPath = outputPath + File.separator + "temp_decrypt";
-                    String originalFilename = FileDecryptor.decryptFile(
-                            inputPath,
-                            tempPath,
-                            passwordChars
-                    );
-
-                    // Rename to original filename
-                    finalOutputPath = outputPath + File.separator + originalFilename;
-                    File tempFile = new File(tempPath);
-                    File finalFile = new File(finalOutputPath);
-
-                    // Handle if file already exists
-                    if (finalFile.exists()) {
-                        boolean overwrite = showConfirmation(
-                                "File already exists:\n" + originalFilename +
-                                        "\n\nOverwrite it?"
-                        );
-                        if (!overwrite) {
-                            tempFile.delete();
-                            log("Decryption cancelled by user");
-                            return;
-                        }
-                        finalFile.delete();
+                    // Output path should be a directory
+                    File outputLocation = new File(outputPath);
+                    if (!outputLocation.isDirectory()) {
+                        outputLocation = outputLocation.getParentFile();
                     }
 
-                    tempFile.renameTo(finalFile);
-                    log("Output: " + originalFilename);
+                    String folderName = FolderEncryptor.decryptFolder(
+                            inputFile.getAbsolutePath(),
+                            outputLocation.getAbsolutePath(),
+                            passwordChars,
+                            (current, total, currentFile) -> {
+                                Platform.runLater(() -> {
+                                    double progress = (double) current / total;
+                                    progressBar.setProgress(progress);
+                                    progressLabel.setText("Decrypting file " + current + " of " + total);
+                                });
+                            }
+                    );
+
+                    log("Output: Folder restored - " + folderName);
+                    log("✓ Folder decryption completed successfully!");
+                    Platform.runLater(() -> showSuccess("Folder decrypted successfully!\nRestored as: " + folderName));
 
                 } else {
-                    // Output is a full file path - use as is
-                    finalOutputPath = outputPath;
-                    FileDecryptor.decryptFile(
-                            inputPath,
-                            finalOutputPath,
-                            passwordChars
-                    );
-                    log("Output: " + finalOutputPath);
-                }
+                    // SINGLE FILE DECRYPTION
+                    log("Detected: Encrypted file");
 
-                log("✓ Decryption completed successfully!");
-                showSuccess("File decrypted successfully!\nRestored as: " +
-                        new File(finalOutputPath).getName());
+                    Platform.runLater(() -> {
+                        progressBar.setProgress(-1); // Indeterminate
+                        progressLabel.setText("Decrypting file...");
+                    });
+
+                    // Check if output path is a directory
+                    File outputLocation = new File(outputPath);
+                    String finalOutputPath;
+
+                    if (outputLocation.isDirectory()) {
+                        // Output is a directory - decrypt will auto-generate filename
+                        String tempPath = outputPath + File.separator + "temp_decrypt";
+                        String originalFilename = FileDecryptor.decryptFile(
+                                inputFile.getAbsolutePath(),
+                                tempPath,
+                                passwordChars
+                        );
+
+                        // Rename to original filename
+                        finalOutputPath = outputPath + File.separator + originalFilename;
+                        File tempFile = new File(tempPath);
+                        File finalFile = new File(finalOutputPath);
+
+                        // Handle if file already exists
+                        if (finalFile.exists()) {
+                            boolean[] overwrite = {false};
+                            Platform.runLater(() -> {
+                                overwrite[0] = showConfirmation(
+                                        "File already exists:\n" + originalFilename +
+                                                "\n\nOverwrite it?"
+                                );
+                            });
+
+                            // Wait for user response
+                            Thread.sleep(100);
+
+                            if (!overwrite[0]) {
+                                tempFile.delete();
+                                log("Decryption cancelled by user");
+                                return;
+                            }
+                            finalFile.delete();
+                        }
+
+                        tempFile.renameTo(finalFile);
+                        log("Output: " + originalFilename);
+
+                    } else {
+                        // Output is a full file path - use as is
+                        finalOutputPath = outputPath;
+                        FileDecryptor.decryptFile(
+                                inputFile.getAbsolutePath(),
+                                finalOutputPath,
+                                passwordChars
+                        );
+                        log("Output: " + finalOutputPath);
+                    }
+
+                    log("✓ Decryption completed successfully!");
+                    Platform.runLater(() -> showSuccess("File decrypted successfully!\nRestored as: " +
+                            new File(finalOutputPath).getName()));
+                }
             }
 
             // Clear password from memory
@@ -409,6 +594,8 @@ public class EncryptionApp extends Application {
         alert.setContentText(message);
         alert.showAndWait();
     }
+
+
 
     /**
      * Shows a success alert
